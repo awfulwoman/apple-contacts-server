@@ -99,7 +99,7 @@ def test_list_contacts_adopts_natively_created(store_module, fake_cn):
     results = store_module.list_contacts()
     assert len(results) == 1
     assert results[0]["name"] == "Katherine Johnson"
-    assert results[0]["id"] != native.identifier()  # gateway id, not CNContact's
+    assert results[0]["id"] != native.identifier()  # our own id, not CNContact's
 
     # Second call reuses the same adopted id rather than adopting again.
     again = store_module.list_contacts()

@@ -1,13 +1,13 @@
 """Contacts store backed by real Contacts.app content plus the `sidecar` id-mapping
-table. Public interface intentionally mirrors gateway's own `tools/contacts.py` dict
-shape (id, name, nickname, organisation, job_title, emails, phones, addresses,
-birthday, urls) since gateway's contacts tools become a thin HTTP client over this
-service's REST API.
+table. Public interface (id, name, nickname, organisation, job_title, emails,
+phones, addresses, birthday, urls) is designed so a caller can treat this as a
+thin HTTP client over a REST API, without needing its own Contacts framework
+access.
 
 Contacts created outside this service — Contacts.app, Siri, another device — are
 "adopted" on first sight: the first list/get call that observes a CNContact with no
-sidecar row mints one. That's what makes native edits show up through Gateway too,
-unlike the old Radicale backend which only ever saw writes that went through Gateway.
+sidecar row mints one. That's what makes native edits show up through this API
+too, unlike a naive backend that only ever saw writes that went through it.
 
 Unlike reminders, there's no offline-sync client for contacts today, so this store
 skips the LWW/tombstone machinery entirely: `upsert` is plain last-write-wins and

@@ -1,5 +1,5 @@
 """Local bookkeeping the Contacts framework can't hold itself: the mapping from
-Gateway's client-chosen `id` to CNContact's system-assigned `identifier`. Unlike
+a caller's client-chosen `id` to CNContact's system-assigned `identifier`. Unlike
 reminders, there's no LWW/tombstone contract to preserve here (see `store.py`'s
 module docstring) so this is just an id lookup table — no `updated_at`, no
 `deleted`, no cached content."""

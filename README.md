@@ -1,17 +1,17 @@
 # apple-contacts-server
 
 A small authorised REST API in front of the real macOS Contacts app (via the
-`Contacts` framework/`CNContactStore`), so [`gateway`](https://github.com/awfulwoman/gateway)'s
-contacts can be backed by the Contacts app the user actually uses — on any device,
-via Siri, or the Contacts UI — instead of a CardDAV store nothing else syncs with.
-It replaces Radicale as gateway's contacts backend (mirrors how
-[`apple-reminders-server`](https://github.com/awfulwoman/apple-reminders-server)
-replaced Radicale for reminders). Runs on **Malcolm** (`apple-macmini-m4-16gb-malcolm`),
-the always-on Mac.
+`Contacts` framework/`CNContactStore`), so client applications can read and write
+the Contacts the user actually uses — on any device, via Siri, or the Contacts UI —
+instead of a CardDAV store nothing else syncs with. It's the sibling of
+[`apple-reminders-server`](https://github.com/awfulwoman/apple-reminders-server) and
+[`apple-calendar-server`](https://github.com/awfulwoman/apple-calendar-server) and
+follows the same principles (thin framework wrapper, sidecar SQLite for
+bookkeeping, native-edit adoption, stable code-signed interpreter).
 
 ## Why a sidecar database
 
-`CNContact.identifier` is system-assigned, not client-choosable, so Gateway's own
+`CNContact.identifier` is system-assigned, not client-choosable, so a caller's own
 `id` still needs somewhere to live. `apple_contacts_server/sidecar.py` keeps a small
 local SQLite table — `id ↔ identifier`, nothing else — purely for that mapping. The
 contact *content* always lives in the real Contacts.app; the sidecar is never
@@ -45,8 +45,8 @@ First run triggers a macOS permission dialog for Contacts access — approve it 
 
 Must run as a **LaunchAgent** (`gui/<uid>` domain), not a LaunchDaemon — Contacts'
 TCC permission is granted per logged-in user in a GUI session; a root-owned system
-daemon never sees the prompt. In production this is installed by the infra role
-`system-apple-contacts-server` instead of the script above.
+daemon never sees the prompt. In practice that means running it on a Mac that stays
+logged into a GUI session — a headless box can never hold the grant.
 
 ### Why the interpreter is code-signed (permission stability)
 
@@ -68,8 +68,7 @@ The fix, identical in shape to `apple-reminders-server`:
   `scripts/sign_runtime.sh` signs the interpreter with a fixed identifier
   (`com.awfulwoman.apple-contacts-server`). TCC then matches on the Designated
   Requirement (identifier + cert) instead of the cdhash, so the grant **survives
-  rebuilds and upgrades**. Re-run `sign_runtime.sh` after any manual rebuild; the
-  infra role runs it on every deploy.
+  rebuilds and upgrades**. Re-run `sign_runtime.sh` after any manual rebuild.
 - **`.python-version` is pinned to an exact patch** so uv stops auto-swapping the
   interpreter underneath the grant.
 
@@ -88,12 +87,11 @@ All endpoints require `Authorization: Bearer <token>` (one of
 | PUT | `/contacts/{id}` | Create (unknown id) or update (known id) |
 | DELETE | `/contacts/{id}` | Delete |
 
-The contact dict shape (`id`, `name`, `nickname`, `organisation`, `job_title`,
-`emails`, `phones`, `addresses`, `birthday`, `urls`) matches gateway's own
-`tools/contacts.py` — see
-`gateway/docs/superpowers/specs/2026-07-19-radicale-contacts-reminders-design.md`
-for the original vCard-backed design this backend swap builds on. `birthday` is
-`YYYY-MM-DD`, or `--MM-DD` for a year-less birthday (Contacts.app supports both).
+The contact dict shape is `id`, `name`, `nickname`, `organisation`, `job_title`,
+`emails`, `phones`, `addresses`, `birthday`, `urls` — chosen to round-trip cleanly
+with a vCard 4.0 representation, since that's the most common interchange format
+for contacts. `birthday` is `YYYY-MM-DD`, or `--MM-DD` for a year-less birthday
+(Contacts.app supports both).
 
 ## Testing
 
