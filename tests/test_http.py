@@ -24,7 +24,7 @@ def test_put_get_list_roundtrip(app, store_module):
         "nickname": "Ada",
         "organisation": "",
         "job_title": "",
-        "emails": ["ada@example.com"],
+        "emails": [{"value": "ada@example.com"}],
         "phones": [],
         "addresses": [],
         "birthday": None,
@@ -181,9 +181,15 @@ def test_explicit_nulls_are_treated_as_empty(app):
         pytest.param({"name": "A B", "emails": "ada@example.com"}, id="emails-is-string"),
         pytest.param({"name": "A B", "emails": [None]}, id="emails-contains-null"),
         pytest.param({"name": "A B", "emails": [{"a": 1}]}, id="emails-contains-object"),
+        pytest.param({"name": "A B", "emails": ["ada@example.com"]}, id="emails-is-bare-string-list"),
+        pytest.param({"name": "A B", "emails": [{"label": "work"}]}, id="emails-item-missing-value"),
+        pytest.param({"name": "A B", "emails": [{"value": "a@b.c", "label": 5}]}, id="emails-item-label-is-number"),
+        pytest.param({"name": "A B", "emails": [{"value": ["a@b.c"]}]}, id="emails-item-value-is-array"),
         pytest.param({"name": "A B", "phones": [None]}, id="phones-contains-null"),
         pytest.param({"name": "A B", "phones": "+15551234567"}, id="phones-is-string"),
+        pytest.param({"name": "A B", "phones": ["+15551234567"]}, id="phones-is-bare-string-list"),
         pytest.param({"name": "A B", "urls": "https://example.com"}, id="urls-is-string"),
+        pytest.param({"name": "A B", "urls": ["https://example.com"]}, id="urls-is-bare-string-list"),
         pytest.param({"name": "A B", "addresses": ["oops"]}, id="addresses-contains-string"),
         pytest.param({"name": "A B", "addresses": {"street": "x"}}, id="addresses-is-object"),
         pytest.param({"name": "A B", "addresses": [{"street": 1}]}, id="address-field-is-number"),
@@ -216,6 +222,59 @@ def test_string_emails_never_reach_the_address_book(app, fake_cn):
     client = TestClient(app, raise_server_exceptions=False)
     client.put("/contacts/x", json={"name": "A B", "emails": "ada@example.com"}, headers=AUTH)
     assert fake_cn.contacts == {}
+
+
+def test_email_label_defaults_to_home_when_omitted(app):
+    client = TestClient(app)
+    resp = client.put("/contacts/x", json={"name": "A B", "emails": [{"value": "a@b.c"}]}, headers=AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["emails"] == [{"label": "home", "value": "a@b.c"}]
+
+
+def test_friendly_label_aliases_are_case_insensitive(app, fake_cn):
+    """A friendly alias resolves to the framework's standard label — "WORK"
+    isn't preserved verbatim, it becomes whatever Contacts.app calls "work"."""
+    client = TestClient(app)
+    resp = client.put(
+        "/contacts/x", json={"name": "A B", "emails": [{"label": "WORK", "value": "a@b.c"}]}, headers=AUTH
+    )
+    assert resp.status_code == 200
+    assert resp.json()["emails"][0]["label"] == fake_cn.LABEL_WORK
+
+
+def test_read_modify_write_preserves_a_native_contacts_label(app, store_module, fake_cn):
+    """A contact created in Contacts.app with a raw framework label (not a
+    friendly alias), fetched and written back unchanged through the full HTTP
+    stack, must not come back relabelled 'home'."""
+    native = fake_cn.new_contact()
+    native.setGivenName_("Grace")
+    native.setFamilyName_("Hopper")
+    native.setEmailAddresses_([fake_cn.make_labeled_value("_$!<Work>!$_", "g@navy.mil")])
+    native.setPhoneNumbers_([
+        fake_cn.make_labeled_value("_$!<Work>!$_", fake_cn.make_phone_number("+15551234567"))
+    ])
+    fake_cn.save_contact(None, native, is_new=True)
+
+    client = TestClient(app)
+    fetched = client.get("/contacts", headers=AUTH).json()["contacts"][0]
+    assert fetched["emails"] == [{"label": "_$!<Work>!$_", "value": "g@navy.mil"}]
+
+    assert client.put(f"/contacts/{fetched['id']}", json=fetched, headers=AUTH).status_code == 200
+
+    stored = fake_cn.contacts[store_module._sidecar.by_id(fetched["id"])]
+    assert stored.emailAddresses()[0].label() == "_$!<Work>!$_"
+    assert stored.phoneNumbers()[0].label() == "_$!<Work>!$_"
+
+
+def test_custom_label_is_preserved(app):
+    """A label that isn't a recognised friendly alias is saved as a literal
+    custom label — same as typing one in Contacts.app — not rejected."""
+    client = TestClient(app)
+    resp = client.put(
+        "/contacts/x", json={"name": "A B", "emails": [{"label": "yacht club", "value": "a@b.c"}]}, headers=AUTH
+    )
+    assert resp.status_code == 200
+    assert resp.json()["emails"] == [{"label": "yacht club", "value": "a@b.c"}]
 
 
 def test_validation_error_message_names_the_field(app):

@@ -37,14 +37,42 @@ def _validate_birthday(v: str) -> str:
     raise ValueError(f"birthday must be YYYY-MM-DD or --MM-DD, got {v!r}")
 
 
+def _null_label_to_default(v):
+    return "home" if v is None else v
+
+
+class LabeledValue(BaseModel):
+    """An email/phone/URL, tagged with the Contacts label it's filed under.
+
+    `label` round-trips exactly what Contacts.app has: fetch a contact, send
+    its `label` back unchanged, and it's preserved — including custom labels a
+    user typed themselves, and the framework's raw internal tokens for
+    standard ones (e.g. `"_$!<Work>!$_"`). For a *new* entry, the friendly
+    aliases `"home"`, `"work"`, `"other"` (case-insensitive) are resolved to
+    the matching standard label; anything else not recognised as a raw
+    framework token is saved as a literal custom label, same as typing a
+    custom label in Contacts.app.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    label: str = "home"
+    value: str
+
+    _null_label = field_validator("label", mode="before")(_null_label_to_default)
+
+
 class Address(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    label: str = "home"
     street: str = ""
     city: str = ""
     state: str = ""
     postal_code: str = ""
     country: str = ""
+
+    _null_label = field_validator("label", mode="before")(_null_label_to_default)
 
 
 class ContactBody(BaseModel):
@@ -54,11 +82,11 @@ class ContactBody(BaseModel):
     nickname: str = ""
     organisation: str = ""
     job_title: str = ""
-    emails: list[str] = []
-    phones: list[str] = []
+    emails: list[LabeledValue] = []
+    phones: list[LabeledValue] = []
     addresses: list[Address] = []
     birthday: str | None = None
-    urls: list[str] = []
+    urls: list[LabeledValue] = []
 
     # An explicit JSON `null` for a scalar/list field means "empty", not "wrong
     # type" — a client clearing a field shouldn't get a 400.

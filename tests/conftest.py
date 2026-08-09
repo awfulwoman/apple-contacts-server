@@ -163,6 +163,8 @@ class FakeContacts:
     """Implements the same functions as `contacts_client`, backed by an in-memory dict."""
 
     LABEL_HOME = "home"
+    LABEL_WORK = "work"
+    LABEL_OTHER = "other"
 
     def __init__(self):
         self.contacts: dict[str, FakeContact] = {}

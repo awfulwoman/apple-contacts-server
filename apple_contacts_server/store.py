@@ -4,6 +4,10 @@ phones, addresses, birthday, urls) is designed so a caller can treat this as a
 thin HTTP client over a REST API, without needing its own Contacts framework
 access.
 
+`emails`/`phones`/`urls`/`addresses` entries carry a `label` (e.g. `"home"`,
+`"work"`, or a raw Contacts framework token like `"_$!<Work>!$_"` on a native
+contact) — see `models.LabeledValue`'s docstring for how that round-trips.
+
 Contacts created outside this service — Contacts.app, Siri, another device — are
 "adopted" on first sight: the first list/get call that observes a CNContact with no
 sidecar row mints one. That's what makes native edits show up through this API
@@ -61,12 +65,22 @@ def _components_to_birthday(comps) -> str | None:
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
-def _labeled_strings(values) -> list[str]:
-    return [str(v.value()) for v in (values or [])]
+def _resolve_label(label: str):
+    """Friendly aliases accepted on the way in (case-insensitive); anything
+    else — including a framework's raw internal token fetched via GET and sent
+    back unchanged — is passed straight through as a literal (possibly custom)
+    label. Built per-call, not at module scope: `cn` is swapped for a fake in
+    tests, and a module-level dict would freeze in the real constants first."""
+    friendly = {"home": cn.LABEL_HOME, "work": cn.LABEL_WORK, "other": cn.LABEL_OTHER}
+    return friendly.get(label.lower(), label)
 
 
-def _phone_strings(values) -> list[str]:
-    return [str(v.value().stringValue()) for v in (values or [])]
+def _labeled_values(values) -> list[dict]:
+    return [{"label": str(v.label() or ""), "value": str(v.value())} for v in (values or [])]
+
+
+def _labeled_phones(values) -> list[dict]:
+    return [{"label": str(v.label() or ""), "value": str(v.value().stringValue())} for v in (values or [])]
 
 
 def _addresses(values) -> list[dict]:
@@ -74,6 +88,7 @@ def _addresses(values) -> list[dict]:
     for v in values or []:
         a = v.value()
         out.append({
+            "label": str(v.label() or ""),
             "street": str(a.street() or ""),
             "city": str(a.city() or ""),
             "state": str(a.state() or ""),
@@ -92,11 +107,11 @@ def _contact_to_dict(contact, id: str) -> dict:
         "nickname": str(contact.nickname() or ""),
         "organisation": str(contact.organizationName() or ""),
         "job_title": str(contact.jobTitle() or ""),
-        "emails": _labeled_strings(contact.emailAddresses()),
-        "phones": _phone_strings(contact.phoneNumbers()),
+        "emails": _labeled_values(contact.emailAddresses()),
+        "phones": _labeled_phones(contact.phoneNumbers()),
         "addresses": _addresses(contact.postalAddresses()),
         "birthday": _components_to_birthday(contact.birthday()),
-        "urls": _labeled_strings(contact.urlAddresses()),
+        "urls": _labeled_values(contact.urlAddresses()),
     }
 
 
@@ -123,18 +138,25 @@ def _apply_dict(mutable, contact: dict) -> None:
     mutable.setNickname_(contact.get("nickname") or "")
     mutable.setOrganizationName_(contact.get("organisation") or "")
     mutable.setJobTitle_(contact.get("job_title") or "")
-    mutable.setEmailAddresses_([cn.make_labeled_value(cn.LABEL_HOME, e) for e in contact.get("emails") or []])
+    mutable.setEmailAddresses_([
+        cn.make_labeled_value(_resolve_label(e.get("label", "home")), e["value"])
+        for e in contact.get("emails") or []
+    ])
     mutable.setPhoneNumbers_([
-        cn.make_labeled_value(cn.LABEL_HOME, cn.make_phone_number(p)) for p in contact.get("phones") or []
+        cn.make_labeled_value(_resolve_label(p.get("label", "home")), cn.make_phone_number(p["value"]))
+        for p in contact.get("phones") or []
     ])
     mutable.setPostalAddresses_([
-        cn.make_labeled_value(cn.LABEL_HOME, cn.make_postal_address(
+        cn.make_labeled_value(_resolve_label(a.get("label", "home")), cn.make_postal_address(
             a.get("street", ""), a.get("city", ""), a.get("state", ""),
             a.get("postal_code", ""), a.get("country", ""),
         ))
         for a in contact.get("addresses") or []
     ])
-    mutable.setUrlAddresses_([cn.make_labeled_value(cn.LABEL_HOME, u) for u in contact.get("urls") or []])
+    mutable.setUrlAddresses_([
+        cn.make_labeled_value(_resolve_label(u.get("label", "home")), u["value"])
+        for u in contact.get("urls") or []
+    ])
     mutable.setBirthday_(_birthday_to_components(contact["birthday"]) if contact.get("birthday") else None)
 
 

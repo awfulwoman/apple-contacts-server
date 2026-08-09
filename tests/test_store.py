@@ -19,11 +19,11 @@ def _new_contact(store_module, **overrides):
 
 
 def test_upsert_and_get_roundtrip(store_module):
-    c = _new_contact(store_module, name="Ada Lovelace", nickname="Ada", emails=["ada@example.com"])
+    c = _new_contact(store_module, name="Ada Lovelace", nickname="Ada", emails=[{"value": "ada@example.com"}])
     stored = store_module.upsert(c)
     assert stored["name"] == "Ada Lovelace"
     assert stored["nickname"] == "Ada"
-    assert stored["emails"] == ["ada@example.com"]
+    assert stored["emails"] == [{"label": "home", "value": "ada@example.com"}]
 
     fetched = store_module.get(c["id"])
     assert fetched["name"] == "Ada Lovelace"
@@ -36,20 +36,56 @@ def test_upsert_full_fields(store_module):
         name="Grace Hopper",
         organisation="US Navy",
         job_title="Rear Admiral",
-        emails=["grace@example.com", "g.hopper@example.com"],
-        phones=["+15551234567"],
-        addresses=[{"street": "1 Infinite Loop", "city": "Cupertino", "state": "CA", "postal_code": "95014", "country": "USA"}],
+        emails=[{"value": "grace@example.com"}, {"label": "work", "value": "g.hopper@example.com"}],
+        phones=[{"value": "+15551234567"}],
+        addresses=[{
+            "label": "work", "street": "1 Infinite Loop", "city": "Cupertino",
+            "state": "CA", "postal_code": "95014", "country": "USA",
+        }],
         birthday="1906-12-09",
-        urls=["https://example.com"],
+        urls=[{"value": "https://example.com"}],
     )
     stored = store_module.upsert(c)
     assert stored["organisation"] == "US Navy"
     assert stored["job_title"] == "Rear Admiral"
-    assert stored["emails"] == ["grace@example.com", "g.hopper@example.com"]
-    assert stored["phones"] == ["+15551234567"]
-    assert stored["addresses"] == [{"street": "1 Infinite Loop", "city": "Cupertino", "state": "CA", "postal_code": "95014", "country": "USA"}]
+    assert stored["emails"] == [
+        {"label": "home", "value": "grace@example.com"},
+        {"label": "work", "value": "g.hopper@example.com"},
+    ]
+    assert stored["phones"] == [{"label": "home", "value": "+15551234567"}]
+    assert stored["addresses"] == [{
+        "label": "work", "street": "1 Infinite Loop", "city": "Cupertino",
+        "state": "CA", "postal_code": "95014", "country": "USA",
+    }]
     assert stored["birthday"] == "1906-12-09"
-    assert stored["urls"] == ["https://example.com"]
+    assert stored["urls"] == [{"label": "home", "value": "https://example.com"}]
+
+
+def test_upsert_preserves_a_custom_label_on_round_trip(store_module):
+    """A label sent back unchanged — including one that isn't a recognised
+    friendly alias — must survive as a literal custom label."""
+    c = _new_contact(store_module, emails=[{"label": "yacht club", "value": "ada@example.com"}])
+    stored = store_module.upsert(c)
+    assert stored["emails"] == [{"label": "yacht club", "value": "ada@example.com"}]
+
+    fetched = store_module.get(c["id"])
+    assert fetched["emails"] == [{"label": "yacht club", "value": "ada@example.com"}]
+
+
+def test_read_modify_write_preserves_a_native_contacts_label(store_module, fake_cn):
+    """A native contact's raw framework label token, fetched and sent back
+    unchanged, must not be relabelled 'home'."""
+    native = fake_cn.new_contact()
+    native.setGivenName_("Grace")
+    native.setFamilyName_("Hopper")
+    native.setEmailAddresses_([fake_cn.make_labeled_value("_$!<Work>!$_", "g@navy.mil")])
+    fake_cn.save_contact(None, native, is_new=True)
+
+    fetched = store_module.list_contacts()[0]
+    assert fetched["emails"] == [{"label": "_$!<Work>!$_", "value": "g@navy.mil"}]
+
+    stored = store_module.upsert(fetched)
+    assert stored["emails"] == [{"label": "_$!<Work>!$_", "value": "g@navy.mil"}]
 
 
 def test_upsert_birthday_without_year(store_module):

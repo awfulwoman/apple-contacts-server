@@ -25,6 +25,8 @@ ALL_KEYS = [
 ]
 
 LABEL_HOME = CN.CNLabelHome
+LABEL_WORK = CN.CNLabelWork
+LABEL_OTHER = CN.CNLabelOther
 
 # How long to wait for the TCC permission dialog. Generous — it's a one-time,
 # in-person interaction — but bounded: without a timeout, a completion handler

@@ -91,21 +91,33 @@ The contact dict shape is `id`, `name`, `nickname`, `organisation`, `job_title`,
 `emails`, `phones`, `addresses`, `birthday`, `urls` — chosen to round-trip cleanly
 with a vCard 4.0 representation, since that's the most common interchange format
 for contacts. `birthday` is `YYYY-MM-DD`, or `--MM-DD` for a year-less birthday
-(Contacts.app supports both).
+(Contacts.app supports both). `name` folds given/middle/family into one string
+("first word is given, last is family, anything between is middle" — see
+`store._split_name`); a company contact may have an empty `name` if
+`organisation` is set instead.
+
+`emails`, `phones` and `urls` are lists of `{"label": "home", "value": "…"}`;
+`addresses` is a list of `{"label": "home", "street", "city", "state",
+"postal_code", "country"}`. `label` round-trips whatever Contacts.app has —
+fetch a contact and send its `label`s back unchanged and they're preserved,
+including custom labels and the framework's raw internal tokens for standard
+ones (e.g. `"_$!<Work>!$_"`). For a new entry, `"home"` / `"work"` / `"other"`
+(case-insensitive, and the default if `label` is omitted) resolve to the
+matching standard label; anything else is saved as a literal custom label.
 
 `PUT` bodies are validated against `apple_contacts_server/models.py` before
 anything reaches the Contacts framework; a wrong type, or a `birthday` that
 isn't a real calendar date, is a `400` with
-`{"error": {"code": "validation_error", "message": …}}`. Only `name` is required
-— omitted fields take their empty default, and an explicit `null` (or, for
-`birthday`, an empty string) clears a field. Any `id` in the body is ignored in
-favour of the path.
+`{"error": {"code": "validation_error", "message": …}}`. Only `name` or
+`organisation` is required (at least one, for company contacts) — omitted
+fields take their empty default, and an explicit `null` (or, for `birthday`, an
+empty string) clears a field. Any `id` in the body is ignored in favour of the
+path.
 
 ## Testing
 
 ```bash
-uv run pytest -m "not known_issues"   # the suite that should be green
-uv run pytest                          # everything, including the known-issue tests
+uv run pytest
 ```
 
 `Contacts` calls are mocked (`tests/conftest.py`'s `FakeContacts`) — no permission
@@ -113,9 +125,8 @@ prompt, no real Contacts data touched. `apple_contacts_server/contacts_client.py
 is the only module that imports `Contacts` directly, kept thin so it's the one
 thing that needs occasional live verification against real Contacts.app.
 
-`tests/test_known_issues.py` is **expected to fail**. It holds one remaining
-executable defect from review: a native contact's `work`/`home`/etc. label is
-destroyed by a read-modify-write round-trip, because `emails`/`phones`/`urls`
-are plain string lists with nowhere to carry a label. Fixing it means changing
-that wire format, so it's parked here pending a decision rather than patched
-around. Not `xfail`-marked, deliberately, so a regression can't hide in it.
+`tests/test_known_issues.py` holds executable descriptions of defects found in
+review but not yet fixed, marked `known_issues` (run `pytest -m "not
+known_issues"` to skip them) — empty right now, since everything found so far
+has a fix. Not `xfail`-marked, deliberately, so a regression added there later
+can't hide.
