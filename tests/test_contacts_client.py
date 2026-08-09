@@ -40,6 +40,22 @@ def test_run_sync_propagates_a_failure_to_start():
     raise AssertionError("exception from `start` was swallowed")
 
 
+def test_run_sync_times_out_if_the_callback_never_fires():
+    """A completion handler that never fires must not hang forever — a headless
+    LaunchAgent has no way to intervene and recover."""
+    import pytest
+
+    def never_calls_back(callback):
+        pass
+
+    with pytest.raises(TimeoutError):
+        contacts_client._run_sync(never_calls_back, timeout=0.2)
+
+
+def test_request_access_uses_a_bounded_timeout():
+    assert contacts_client.REQUEST_ACCESS_TIMEOUT_SECONDS > 0
+
+
 def test_all_keys_covers_every_public_field():
     """`ALL_KEYS` drives both fetching and what `store` can read back — if a field
     is added to the public dict it must be fetched too."""

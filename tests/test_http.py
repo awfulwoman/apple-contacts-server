@@ -237,3 +237,78 @@ def test_empty_string_birthday_clears_the_field(app):
     resp = client.put("/contacts/bd", json={"name": "A B", "birthday": ""}, headers=AUTH)
     assert resp.status_code == 200
     assert resp.json()["birthday"] is None
+
+
+# --- Consistent {"error": {"code", "message"}} envelope, even for framework/routing errors ------
+
+@pytest.mark.parametrize(
+    "method,path",
+    [("post", "/contacts/x"), ("patch", "/contacts/x"), ("get", "/nope"), ("delete", "/contacts")],
+)
+def test_routing_errors_use_the_documented_error_shape(app, method, path):
+    """Starlette's own 404/405 default to a plain-text body — a different shape
+    to every handler error, which returns {"error": {"code", "message"}}."""
+    client = TestClient(app)
+    resp = getattr(client, method)(path, headers=AUTH)
+    assert resp.status_code in (404, 405)
+    assert resp.headers["content-type"].startswith("application/json"), resp.text
+    assert set(resp.json()["error"]) == {"code", "message"}
+
+
+@pytest.mark.parametrize(
+    "method,route",
+    [("fetch_all_contacts", "list"), ("contact_by_identifier", "get")],
+)
+def test_contacts_failure_returns_json_error_envelope(app, fake_cn, store_module, method, route):
+    """AccessDenied/SaveFailed used to escape http.py uncaught, so a revoked TCC
+    grant or an unreachable store returned a bare 500 with a plain-text body."""
+    from apple_contacts_server.contacts_client import AccessDenied
+
+    store_module.upsert({"id": "x", "name": "A B"})
+    fake_cn.failures[method] = AccessDenied("Contacts access not granted")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/contacts" if route == "list" else "/contacts/x", headers=AUTH)
+
+    assert resp.status_code >= 500
+    assert resp.headers["content-type"].startswith("application/json"), resp.text
+    assert "error" in resp.json()
+
+
+def test_save_failure_returns_json_error_envelope(app, fake_cn):
+    from apple_contacts_server.contacts_client import SaveFailed
+
+    fake_cn.failures["save_contact"] = SaveFailed("could not write to the address book")
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.put("/contacts/x", json={"name": "A B"}, headers=AUTH)
+
+    assert resp.status_code >= 500
+    assert resp.headers["content-type"].startswith("application/json"), resp.text
+    assert "error" in resp.json()
+
+
+# --- Handlers no longer block the event loop -----------------------------------
+
+async def test_contacts_calls_do_not_block_the_event_loop(app, fake_cn):
+    """Handlers call `store` through `run_in_threadpool`; enumerating a large
+    address book must not stall every other in-flight request."""
+    import asyncio
+    import time
+
+    import httpx
+
+    original = fake_cn.fetch_all_contacts
+
+    def slow_fetch(store):
+        time.sleep(0.4)
+        return original(store)
+
+    fake_cn.fetch_all_contacts = slow_fetch
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        started = time.perf_counter()
+        await asyncio.gather(*(client.get("/contacts", headers=AUTH) for _ in range(3)))
+        elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.9, f"3 concurrent requests took {elapsed:.2f}s — they serialised"

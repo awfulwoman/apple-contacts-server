@@ -57,4 +57,8 @@ def test_missing_tokens_logs_a_warning(make_app, caplog):
 
     with caplog.at_level(logging.WARNING, logger="apple_contacts_server"):
         make_app(bearer_tokens=[])
-    assert any("CONTACTS_SERVER_BEARER_TOKENS" in r.message for r in caplog.records)
+    warning = " ".join(r.message for r in caplog.records)
+    assert "CONTACTS_SERVER_BEARER_TOKENS" in warning
+    # The server 401s every request with no tokens configured — it's unusable,
+    # not open, so the warning must not claim auth is "disabled".
+    assert "disabled" not in warning.lower()

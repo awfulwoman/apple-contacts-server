@@ -9,7 +9,12 @@ logger = logging.getLogger("apple_contacts_server")
 
 def create_app(config: Config):
     if not config.bearer_tokens:
-        logger.warning("Auth DISABLED — set CONTACTS_SERVER_BEARER_TOKENS to require a bearer token")
+        # `_authorized` returns False with no tokens configured, so every
+        # request gets a 401 — the server is unusable, not open.
+        logger.warning(
+            "No CONTACTS_SERVER_BEARER_TOKENS configured — every request will be "
+            "rejected with 401. Set CONTACTS_SERVER_BEARER_TOKENS to allow access."
+        )
     store.init(config)
     http.init(config)
     return http.create_app()

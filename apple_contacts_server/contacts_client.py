@@ -25,6 +25,12 @@ ALL_KEYS = [
 
 LABEL_HOME = CN.CNLabelHome
 
+# How long to wait for the TCC permission dialog. Generous — it's a one-time,
+# in-person interaction — but bounded: without a timeout, a completion handler
+# that never fires (dialog dismissed some other way, TCC daemon wedged) hangs
+# a headless LaunchAgent forever with no way to recover.
+REQUEST_ACCESS_TIMEOUT_SECONDS = 300
+
 
 class AccessDenied(Exception):
     pass
@@ -34,9 +40,10 @@ class SaveFailed(Exception):
     pass
 
 
-def _run_sync(start):
+def _run_sync(start, timeout: float | None = None):
     """Bridge a Contacts completion-handler call to a blocking call. `start` is
-    given a callback and must invoke it exactly once; returns the callback's args."""
+    given a callback and must invoke it exactly once; returns the callback's
+    args. `timeout` is in seconds; `None` waits indefinitely."""
     done = threading.Event()
     result: list = []
 
@@ -45,7 +52,8 @@ def _run_sync(start):
         done.set()
 
     start(callback)
-    done.wait()
+    if not done.wait(timeout):
+        raise TimeoutError(f"Contacts framework did not respond within {timeout}s")
     return tuple(result)
 
 
@@ -59,7 +67,10 @@ def request_access(store: CN.CNContactStore) -> None:
     status = CN.CNContactStore.authorizationStatusForEntityType_(ENTITY_TYPE_CONTACTS)
     if status == CN.CNAuthorizationStatusAuthorized:
         return
-    granted, error = _run_sync(lambda cb: store.requestAccessForEntityType_completionHandler_(ENTITY_TYPE_CONTACTS, cb))
+    granted, error = _run_sync(
+        lambda cb: store.requestAccessForEntityType_completionHandler_(ENTITY_TYPE_CONTACTS, cb),
+        timeout=REQUEST_ACCESS_TIMEOUT_SECONDS,
+    )
     if not granted:
         raise AccessDenied(f"Contacts access not granted: {error}")
 

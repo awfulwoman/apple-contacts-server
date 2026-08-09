@@ -9,23 +9,17 @@ can't hide.
 Covered here:
   * labels (work/home/etc.) are destroyed by a read-modify-write round-trip
   * organisation-only and middle-name contacts don't round-trip
-  * Contacts framework failures surface as unhandled 500s
-  * routing errors (404/405) use a different error shape to handler errors
-  * blocking Contacts calls run on the event loop
-  * `_run_sync` waits forever if a completion handler never fires
-  * the "Auth DISABLED" startup warning describes the opposite of what happens
+  * repeated internal spaces in a name leak into family_name
 
-Fixed and moved out of this module: non-ASCII bearer tokens (test_http.py),
-case-insensitive auth scheme (test_http.py), sidecar cn_identifier collisions
-and relative db_path (test_sidecar.py), birthday calendar validation
-(test_http.py).
+Fixed and moved out of this module: non-ASCII bearer tokens, case-insensitive
+auth scheme, birthday calendar validation (test_http.py); sidecar
+cn_identifier collisions, relative db_path (test_sidecar.py); unhandled
+framework errors, inconsistent 404/405 error shape (test_http.py, via
+http.py's exception_handlers); blocking Contacts calls on the event loop
+(test_http.py, via run_in_threadpool); _run_sync timeout
+(test_contacts_client.py); misleading "Auth DISABLED" warning (test_main.py).
 """
 from __future__ import annotations
-import logging
-import threading
-import time
-
-import httpx
 import pytest
 from starlette.testclient import TestClient
 
@@ -92,121 +86,3 @@ def test_repeated_spaces_in_name_do_not_leak_into_family_name(store_module, fake
     stored = fake_cn.contacts[store_module._sidecar.by_id("s")]
     assert stored.givenName() == "Ada"
     assert stored.familyName() == "Lovelace"
-
-
-# --- Contacts framework failures are unhandled ---------------------------------
-
-@pytest.mark.parametrize(
-    "method,route",
-    [("fetch_all_contacts", "list"), ("contact_by_identifier", "get")],
-)
-def test_contacts_failure_returns_json_error_envelope(app, fake_cn, store_module, method, route):
-    """AccessDenied/SaveFailed are never caught in http.py, so a revoked TCC grant
-    or an unreachable store returns a bare 500 with a plain-text body."""
-    from apple_contacts_server.contacts_client import AccessDenied
-
-    store_module.upsert({"id": "x", "name": "A B"})
-    fake_cn.failures[method] = AccessDenied("Contacts access not granted")
-
-    client = TestClient(app, raise_server_exceptions=False)
-    resp = client.get("/contacts" if route == "list" else "/contacts/x", headers=AUTH)
-
-    assert resp.status_code >= 500
-    assert resp.headers["content-type"].startswith("application/json"), resp.text
-    assert "error" in resp.json()
-
-
-def test_save_failure_returns_json_error_envelope(app, fake_cn):
-    from apple_contacts_server.contacts_client import SaveFailed
-
-    fake_cn.failures["save_contact"] = SaveFailed("could not write to the address book")
-    client = TestClient(app, raise_server_exceptions=False)
-    resp = client.put("/contacts/x", json={"name": "A B"}, headers=AUTH)
-
-    assert resp.status_code >= 500
-    assert resp.headers["content-type"].startswith("application/json"), resp.text
-    assert "error" in resp.json()
-
-
-# --- Error envelope is inconsistent across the app -----------------------------
-
-@pytest.mark.parametrize(
-    "method,path",
-    [("post", "/contacts/x"), ("patch", "/contacts/x"), ("get", "/nope"), ("delete", "/contacts")],
-)
-def test_routing_errors_use_the_documented_error_shape(app, method, path):
-    """Handler errors return {"error": {"code", "message"}}; Starlette's own 404/405
-    return text/plain, so a client can't parse one shape."""
-    client = TestClient(app)
-    resp = getattr(client, method)(path, headers=AUTH)
-    assert resp.status_code in (404, 405)
-    assert resp.headers["content-type"].startswith("application/json"), resp.text
-    assert set(resp.json()["error"]) == {"code", "message"}
-
-
-# --- Blocking Contacts calls run on the event loop ------------------------------
-
-async def test_contacts_calls_do_not_block_the_event_loop(app, fake_cn):
-    """Handlers are `async def` but call the Contacts framework synchronously.
-    Enumerating a large address book stalls every other in-flight request."""
-    original = fake_cn.fetch_all_contacts
-
-    def slow_fetch(store):
-        time.sleep(0.4)
-        return original(store)
-
-    fake_cn.fetch_all_contacts = slow_fetch
-
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        import asyncio
-
-        started = time.perf_counter()
-        await asyncio.gather(*(client.get("/contacts", headers=AUTH) for _ in range(3)))
-        elapsed = time.perf_counter() - started
-
-    assert elapsed < 0.9, f"3 concurrent requests took {elapsed:.2f}s — they serialised"
-
-
-# --- `_run_sync` has no timeout -------------------------------------------------
-
-def test_run_sync_gives_up_if_the_completion_handler_never_fires():
-    """A completion handler that never fires hangs startup forever, with no log
-    line and no way for a headless LaunchAgent to recover."""
-    from apple_contacts_server import contacts_client
-
-    finished = threading.Event()
-
-    def never_calls_back(callback):
-        pass
-
-    def target():
-        try:
-            contacts_client._run_sync(never_calls_back)
-        except Exception:
-            pass
-        finished.set()
-
-    threading.Thread(target=target, daemon=True).start()
-    assert finished.wait(timeout=3), "_run_sync blocked forever instead of timing out"
-
-
-# --- Startup warning describes the opposite of the behaviour --------------------
-
-def test_no_token_warning_does_not_claim_auth_is_disabled(fake_cn, tmp_path, monkeypatch, caplog):
-    """With no tokens configured, `_authorized` returns False and every request
-    401s. The server is unusable, not open — but the log says 'Auth DISABLED'."""
-    from apple_contacts_server import main, store
-    from apple_contacts_server.config import Config
-
-    monkeypatch.setattr(store, "cn", fake_cn)
-    config = Config(bearer_tokens=[], db_path=str(tmp_path / "meta.db"), _env_file=None)
-
-    with caplog.at_level(logging.WARNING, logger="apple_contacts_server"):
-        app = main.create_app(config)
-
-    client = TestClient(app)
-    assert client.get("/contacts").status_code == 401
-
-    warning = " ".join(r.message for r in caplog.records).lower()
-    assert "disabled" not in warning, f"misleading startup warning: {warning!r}"
