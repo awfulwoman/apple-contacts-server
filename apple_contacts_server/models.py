@@ -6,12 +6,35 @@ just crash: `{"emails": "ada@example.com"}` iterates the *string* and writes
 fifteen single-character email addresses into the user's real address book. The
 model exists so malformed input is a 400 before it can reach `CNSaveRequest`.
 
-Deliberately *not* enforced here (left to `store`, or not yet enforced at all):
-non-empty `name`, and `birthday` calendar validity — `birthday` is checked only
-for being a string.
+Deliberately *not* enforced here (left to `store.upsert`): non-empty `name`.
 """
 from __future__ import annotations
+import re
+from datetime import date
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+
+# `store._birthday_to_components` accepts exactly these two shapes (full date,
+# or `--MM-DD` for a year-less birthday, matching Contacts.app).
+_FULL_BIRTHDAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_YEARLESS_BIRTHDAY_RE = re.compile(r"^--\d{2}-\d{2}$")
+
+
+def _validate_birthday(v: str) -> str:
+    if _YEARLESS_BIRTHDAY_RE.match(v):
+        month, day = int(v[2:4]), int(v[5:7])
+        try:
+            date(2000, month, day)  # 2000: a leap year, so Feb 29 is valid here too
+        except ValueError as e:
+            raise ValueError(f"not a valid calendar date: {v!r} ({e})") from e
+        return v
+    if _FULL_BIRTHDAY_RE.match(v):
+        year, month, day = int(v[:4]), int(v[5:7]), int(v[8:10])
+        try:
+            date(year, month, day)
+        except ValueError as e:
+            raise ValueError(f"not a valid calendar date: {v!r} ({e})") from e
+        return v
+    raise ValueError(f"birthday must be YYYY-MM-DD or --MM-DD, got {v!r}")
 
 
 class Address(BaseModel):
@@ -48,6 +71,15 @@ class ContactBody(BaseModel):
     @classmethod
     def _null_to_empty_list(cls, v):
         return [] if v is None else v
+
+    # `store.upsert` already treats "" the same as no birthday (a falsy check),
+    # so an empty string clears the field rather than failing validation.
+    @field_validator("birthday")
+    @classmethod
+    def _check_birthday(cls, v):
+        if not v:
+            return None
+        return _validate_birthday(v)
 
 
 def format_validation_error(exc: ValidationError) -> str:

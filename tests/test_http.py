@@ -189,6 +189,15 @@ def test_explicit_nulls_are_treated_as_empty(app):
         pytest.param({"name": "A B", "addresses": [{"street": 1}]}, id="address-field-is-number"),
         pytest.param({"name": "A B", "birthday": 19061209}, id="birthday-is-number"),
         pytest.param({"name": "A B", "birthday": ["1906-12-09"]}, id="birthday-is-array"),
+        pytest.param({"name": "A B", "birthday": "2020-13-45"}, id="birthday-bad-month-and-day"),
+        pytest.param({"name": "A B", "birthday": "0000-00-00"}, id="birthday-all-zero"),
+        pytest.param({"name": "A B", "birthday": "2020-02-30"}, id="birthday-feb-30"),
+        pytest.param({"name": "A B", "birthday": "2020-00-15"}, id="birthday-month-zero"),
+        pytest.param({"name": "A B", "birthday": "2020-01-00"}, id="birthday-day-zero"),
+        pytest.param({"name": "A B", "birthday": "1906-12-09T00:00:00"}, id="birthday-has-time-component"),
+        pytest.param({"name": "A B", "birthday": "not-a-date-at-all"}, id="birthday-garbage"),
+        pytest.param({"name": "A B", "birthday": "--02-30"}, id="birthday-yearless-feb-30"),
+        pytest.param({"name": "A B", "birthday": "--13"}, id="birthday-yearless-too-short"),
         pytest.param({"name": "A B", "nickname": ["Ada"]}, id="nickname-is-array"),
         pytest.param({"name": "A B", "organisation": 7}, id="organisation-is-number"),
         pytest.param({"name": "A B", "job_title": {"a": 1}}, id="job-title-is-object"),
@@ -213,3 +222,18 @@ def test_validation_error_message_names_the_field(app):
     client = TestClient(app)
     resp = client.put("/contacts/x", json={"name": "A B", "emails": "nope"}, headers=AUTH)
     assert "emails" in resp.json()["error"]["message"]
+
+
+@pytest.mark.parametrize("birthday", ["1906-12-09", "--12-09", "2000-02-29", "--02-29"])
+def test_valid_birthdays_are_accepted(app, birthday):
+    client = TestClient(app)
+    resp = client.put("/contacts/bd", json={"name": "A B", "birthday": birthday}, headers=AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["birthday"] == birthday
+
+
+def test_empty_string_birthday_clears_the_field(app):
+    client = TestClient(app)
+    resp = client.put("/contacts/bd", json={"name": "A B", "birthday": ""}, headers=AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["birthday"] is None

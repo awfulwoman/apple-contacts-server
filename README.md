@@ -94,11 +94,12 @@ for contacts. `birthday` is `YYYY-MM-DD`, or `--MM-DD` for a year-less birthday
 (Contacts.app supports both).
 
 `PUT` bodies are validated against `apple_contacts_server/models.py` before
-anything reaches the Contacts framework; a wrong type is a `400` with
+anything reaches the Contacts framework; a wrong type, or a `birthday` that
+isn't a real calendar date, is a `400` with
 `{"error": {"code": "validation_error", "message": …}}`. Only `name` is required
-— omitted fields take their empty default, and an explicit `null` clears a field.
-Any `id` in the body is ignored in favour of the path. Note that `birthday` is
-currently only checked for *being a string*, not for being a real date.
+— omitted fields take their empty default, and an explicit `null` (or, for
+`birthday`, an empty string) clears a field. Any `id` in the body is ignored in
+favour of the path.
 
 ## Testing
 

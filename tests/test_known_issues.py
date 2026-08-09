@@ -7,7 +7,6 @@ fix it — none of them are xfail-marked, deliberately, so an unfixed regression
 can't hide.
 
 Covered here:
-  * birthday accepts impossible calendar dates
   * labels (work/home/etc.) are destroyed by a read-modify-write round-trip
   * organisation-only and middle-name contacts don't round-trip
   * Contacts framework failures surface as unhandled 500s
@@ -18,7 +17,8 @@ Covered here:
 
 Fixed and moved out of this module: non-ASCII bearer tokens (test_http.py),
 case-insensitive auth scheme (test_http.py), sidecar cn_identifier collisions
-and relative db_path (test_sidecar.py).
+and relative db_path (test_sidecar.py), birthday calendar validation
+(test_http.py).
 """
 from __future__ import annotations
 import logging
@@ -32,27 +32,6 @@ from starlette.testclient import TestClient
 AUTH = {"Authorization": "Bearer test-token"}
 
 pytestmark = pytest.mark.known_issues
-
-
-# --- Finding 3: birthday is not validated --------------------------------------
-
-@pytest.mark.parametrize(
-    "birthday",
-    ["2020-13-45", "0000-00-00", "2020-02-30", "2020-00-15", "2020-01-00", "1906-12-09T00:00:00", "not-a-date-at-all"],
-)
-def test_impossible_birthday_rejected(app, birthday):
-    client = TestClient(app, raise_server_exceptions=False)
-    resp = client.put("/contacts/bd", json={"name": "A B", "birthday": birthday}, headers=AUTH)
-    assert resp.status_code == 400, f"accepted {birthday!r} and stored {resp.json().get('birthday')!r}"
-
-
-@pytest.mark.parametrize("birthday", ["1906-12-09", "--12-09", "2000-02-29"])
-def test_valid_birthday_still_accepted(app, birthday):
-    """Guard rail for whatever validation gets added: these must keep working."""
-    client = TestClient(app, raise_server_exceptions=False)
-    resp = client.put("/contacts/bd", json={"name": "A B", "birthday": birthday}, headers=AUTH)
-    assert resp.status_code == 200
-    assert resp.json()["birthday"] == birthday
 
 
 # --- Finding 4: labels destroyed by round-trip ---------------------------------
