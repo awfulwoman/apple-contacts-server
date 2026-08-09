@@ -7,22 +7,21 @@ fix it — none of them are xfail-marked, deliberately, so an unfixed regression
 can't hide.
 
 Covered here:
-  * non-ASCII bearer token crashes the auth check
   * birthday accepts impossible calendar dates
   * labels (work/home/etc.) are destroyed by a read-modify-write round-trip
   * organisation-only and middle-name contacts don't round-trip
-  * sidecar raises a raw sqlite IntegrityError on a duplicate cn_identifier
-  * a relative db_path crashes at startup
   * Contacts framework failures surface as unhandled 500s
   * routing errors (404/405) use a different error shape to handler errors
-  * the auth scheme is matched case-sensitively (RFC 7235 says otherwise)
   * blocking Contacts calls run on the event loop
   * `_run_sync` waits forever if a completion handler never fires
   * the "Auth DISABLED" startup warning describes the opposite of what happens
+
+Fixed and moved out of this module: non-ASCII bearer tokens (test_http.py),
+case-insensitive auth scheme (test_http.py), sidecar cn_identifier collisions
+and relative db_path (test_sidecar.py).
 """
 from __future__ import annotations
 import logging
-import sqlite3
 import threading
 import time
 
@@ -33,16 +32,6 @@ from starlette.testclient import TestClient
 AUTH = {"Authorization": "Bearer test-token"}
 
 pytestmark = pytest.mark.known_issues
-
-
-# --- Finding 2: non-ASCII bearer token -----------------------------------------
-
-def test_non_ascii_bearer_token_is_401_not_500(app):
-    """`hmac.compare_digest` raises TypeError on non-ASCII str, so unauthenticated
-    input reaches an unhandled exception."""
-    client = TestClient(app, raise_server_exceptions=False)
-    resp = client.get("/contacts", headers={"Authorization": b"Bearer \xfcnicode"})
-    assert resp.status_code == 401
 
 
 # --- Finding 3: birthday is not validated --------------------------------------
@@ -126,34 +115,6 @@ def test_repeated_spaces_in_name_do_not_leak_into_family_name(store_module, fake
     assert stored.familyName() == "Lovelace"
 
 
-# --- Finding 6: sidecar uniqueness ---------------------------------------------
-
-def test_sidecar_put_handles_duplicate_cn_identifier(tmp_path):
-    """`cn_identifier` is UNIQUE but only `id` conflicts are handled, so a diverged
-    sidecar (restored backup, DB copied between machines) raises raw sqlite."""
-    from apple_contacts_server.sidecar import Sidecar
-
-    sidecar = Sidecar(str(tmp_path / "meta.db"))
-    sidecar.put("id-one", "cn-1")
-    try:
-        sidecar.put("id-two", "cn-1")
-    except sqlite3.IntegrityError as e:
-        pytest.fail(f"raw sqlite error escaped the sidecar: {e}")
-    assert sidecar.by_cn_identifier("cn-1") == "id-two"
-
-
-# --- Finding 7: relative db_path -----------------------------------------------
-
-def test_relative_db_path_works(tmp_path, monkeypatch):
-    """os.path.dirname('meta.db') is '', and makedirs('') raises FileNotFoundError."""
-    from apple_contacts_server.sidecar import Sidecar
-
-    monkeypatch.chdir(tmp_path)
-    sidecar = Sidecar("meta.db")
-    sidecar.put("a", "cn-a")
-    assert sidecar.by_id("a") == "cn-a"
-
-
 # --- Contacts framework failures are unhandled ---------------------------------
 
 @pytest.mark.parametrize(
@@ -202,15 +163,6 @@ def test_routing_errors_use_the_documented_error_shape(app, method, path):
     assert resp.status_code in (404, 405)
     assert resp.headers["content-type"].startswith("application/json"), resp.text
     assert set(resp.json()["error"]) == {"code", "message"}
-
-
-# --- Auth scheme should be case-insensitive (RFC 7235 §2.1) --------------------
-
-@pytest.mark.parametrize("scheme", ["bearer", "BEARER", "BeArEr"])
-def test_auth_scheme_is_case_insensitive(app, scheme):
-    client = TestClient(app)
-    resp = client.get("/contacts", headers={"Authorization": f"{scheme} test-token"})
-    assert resp.status_code == 200
 
 
 # --- Blocking Contacts calls run on the event loop ------------------------------

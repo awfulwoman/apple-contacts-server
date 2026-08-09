@@ -21,10 +21,13 @@ def _authorized(request: Request) -> bool:
     if not _config or not _config.bearer_tokens:
         return False
     header = request.headers.get("authorization", "")
-    if not header.startswith("Bearer "):
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
         return False
-    token = header[len("Bearer "):]
-    return any(hmac.compare_digest(token, t) for t in _config.bearer_tokens)
+    # Compare as bytes: `hmac.compare_digest` raises TypeError on a non-ASCII
+    # `str`, which would otherwise turn an attacker-controlled header into a 500.
+    token_bytes = token.encode("utf-8")
+    return any(hmac.compare_digest(token_bytes, t.encode("utf-8")) for t in _config.bearer_tokens)
 
 
 def _err(status: int, code: str, message: str) -> JSONResponse:

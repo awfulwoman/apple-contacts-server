@@ -99,3 +99,24 @@ def test_sql_metacharacters_in_ids_are_not_interpreted(sidecar):
     sidecar.put(hostile, "cn-1")
     assert sidecar.by_id(hostile) == "cn-1"
     assert sidecar.all() == [(hostile, "cn-1")]
+
+
+def test_put_handles_a_duplicate_cn_identifier(sidecar):
+    """`cn_identifier` is UNIQUE too. A diverged sidecar (restored backup, DB
+    copied between machines) can try to bind it to a second id — that must not
+    raise a raw sqlite error. The old row is stale (the CNContact now belongs to
+    the new id), so it's dropped in favour of the new mapping."""
+    sidecar.put("id-one", "cn-1")
+    sidecar.put("id-two", "cn-1")
+    assert sidecar.by_cn_identifier("cn-1") == "id-two"
+    assert sidecar.by_id("id-one") is None
+
+
+def test_relative_db_path_is_resolved_against_the_cwd(tmp_path, monkeypatch):
+    """`os.path.dirname('meta.db')` is `''`, and `os.makedirs('')` raises
+    FileNotFoundError — a relative db_path used to crash at startup."""
+    monkeypatch.chdir(tmp_path)
+    sidecar = Sidecar("meta.db")
+    sidecar.put("a", "cn-a")
+    assert sidecar.by_id("a") == "cn-a"
+    assert (tmp_path / "meta.db").exists()

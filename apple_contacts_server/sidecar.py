@@ -19,12 +19,20 @@ CREATE INDEX IF NOT EXISTS idx_contacts_cn_identifier ON contacts(cn_identifier)
 class Sidecar:
     def __init__(self, db_path: str):
         path = os.path.expanduser(db_path)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
     def put(self, id: str, cn_identifier: str) -> None:
+        # `cn_identifier` is UNIQUE too, so binding it to `id` can conflict with
+        # a stale row left over from a diverged sidecar (restored backup, DB
+        # copied between machines). That old row is no longer meaningful — the
+        # CNContact it named now belongs to `id` — so it's dropped in favour of
+        # the new mapping rather than raising.
+        self._conn.execute(
+            "DELETE FROM contacts WHERE cn_identifier = ? AND id != ?", (cn_identifier, id)
+        )
         self._conn.execute(
             "INSERT INTO contacts (id, cn_identifier) VALUES (?, ?) "
             "ON CONFLICT(id) DO UPDATE SET cn_identifier=excluded.cn_identifier",

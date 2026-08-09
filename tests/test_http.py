@@ -92,6 +92,22 @@ def test_malformed_auth_headers_rejected(app):
         assert resp.status_code == 401, f"{header!r} was accepted"
 
 
+@pytest.mark.parametrize("scheme", ["bearer", "BEARER", "BeArEr"])
+def test_auth_scheme_is_case_insensitive(app, scheme):
+    """RFC 7235 §2.1: the auth-scheme token is case-insensitive."""
+    client = TestClient(app)
+    resp = client.get("/contacts", headers={"Authorization": f"{scheme} test-token"})
+    assert resp.status_code == 200
+
+
+def test_non_ascii_bearer_token_is_401_not_500(app):
+    """`hmac.compare_digest` raises TypeError on a non-ASCII `str`, which would
+    otherwise turn attacker-controlled input into an unhandled 500."""
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/contacts", headers={"Authorization": b"Bearer \xfcnicode"})
+    assert resp.status_code == 401
+
+
 def test_list_empty(app):
     client = TestClient(app)
     resp = client.get("/contacts", headers=AUTH)
