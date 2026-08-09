@@ -93,13 +93,28 @@ with a vCard 4.0 representation, since that's the most common interchange format
 for contacts. `birthday` is `YYYY-MM-DD`, or `--MM-DD` for a year-less birthday
 (Contacts.app supports both).
 
+`PUT` bodies are validated against `apple_contacts_server/models.py` before
+anything reaches the Contacts framework; a wrong type is a `400` with
+`{"error": {"code": "validation_error", "message": …}}`. Only `name` is required
+— omitted fields take their empty default, and an explicit `null` clears a field.
+Any `id` in the body is ignored in favour of the path. Note that `birthday` is
+currently only checked for *being a string*, not for being a real date.
+
 ## Testing
 
 ```bash
-uv run pytest
+uv run pytest -m "not known_issues"   # the suite that should be green
+uv run pytest                          # everything, including the known-issue tests
 ```
 
 `Contacts` calls are mocked (`tests/conftest.py`'s `FakeContacts`) — no permission
 prompt, no real Contacts data touched. `apple_contacts_server/contacts_client.py`
 is the only module that imports `Contacts` directly, kept thin so it's the one
 thing that needs occasional live verification against real Contacts.app.
+
+`tests/test_known_issues.py` is **expected to fail**. It holds executable
+descriptions of defects found in review but not yet fixed — label loss on
+round-trip, unvalidated birthdays, blocking Contacts calls on the event loop, and
+so on. They're deliberately not `xfail`-marked so a regression can't hide in
+them; see that module's docstring for the full list, and delete each test as its
+defect is fixed.

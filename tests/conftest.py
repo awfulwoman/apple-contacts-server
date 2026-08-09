@@ -1,5 +1,9 @@
-"""A fake standing in for `apple_contacts_server.contacts_client` — in-memory, no
-TCC/Contacts.app dependency, so the store/http tests run anywhere."""
+"""A fake standing in for `apple_contacts_server.contacts_client` — in-memory, so
+the store/http tests touch no real Contacts data and trigger no TCC prompt.
+
+Still macOS-only: `store.py` imports `Foundation` at module scope for
+`NSDateComponents`, so the suite needs PyObjC even though it never reaches
+Contacts.app."""
 from __future__ import annotations
 import uuid
 import pytest
@@ -9,6 +13,9 @@ class FakeLabeledValue:
     def __init__(self, label, value):
         self._label = label
         self._value = value
+
+    def label(self):
+        return self._label
 
     def value(self):
         return self._value
@@ -65,6 +72,7 @@ class FakeContact:
     def __init__(self, identifier):
         self._identifier = identifier
         self._given_name = ""
+        self._middle_name = ""
         self._family_name = ""
         self._nickname = ""
         self._organization_name = ""
@@ -84,6 +92,12 @@ class FakeContact:
 
     def setGivenName_(self, v):
         self._given_name = v
+
+    def middleName(self):
+        return self._middle_name
+
+    def setMiddleName_(self, v):
+        self._middle_name = v
 
     def familyName(self):
         return self._family_name
@@ -152,17 +166,27 @@ class FakeContacts:
 
     def __init__(self):
         self.contacts: dict[str, FakeContact] = {}
+        # Framework failures the real Contacts store can raise (access revoked,
+        # save rejected, store unreachable). Map method name -> exception to raise.
+        self.failures: dict[str, Exception] = {}
+
+    def _maybe_fail(self, method: str) -> None:
+        exc = self.failures.get(method)
+        if exc is not None:
+            raise exc
 
     def new_store(self):
         return self
 
     def request_access(self, store):
-        pass
+        self._maybe_fail("request_access")
 
     def fetch_all_contacts(self, store):
+        self._maybe_fail("fetch_all_contacts")
         return [c for c in self.contacts.values() if not c._removed]
 
     def contact_by_identifier(self, store, cn_identifier):
+        self._maybe_fail("contact_by_identifier")
         c = self.contacts.get(cn_identifier)
         return c if c and not c._removed else None
 
@@ -170,9 +194,11 @@ class FakeContacts:
         return FakeContact(str(uuid.uuid4()))
 
     def save_contact(self, store, contact, is_new):
+        self._maybe_fail("save_contact")
         self.contacts[contact._identifier] = contact
 
     def remove_contact(self, store, cn_identifier):
+        self._maybe_fail("remove_contact")
         contact = self.contacts.get(cn_identifier)
         if contact:
             contact._removed = True

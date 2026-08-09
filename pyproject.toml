@@ -18,6 +18,9 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "known_issues: asserts behaviour the service does not have yet — expected to fail",
+]
 
 [build-system]
 requires = ["hatchling"]
