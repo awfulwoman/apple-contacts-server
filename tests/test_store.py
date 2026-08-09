@@ -64,6 +64,53 @@ def test_upsert_requires_name(store_module):
         store_module.upsert(c)
 
 
+def test_upsert_allows_organisation_only_contact(store_module):
+    """Company contacts (Contacts.app allows these) have no given/family name;
+    organisation alone must satisfy the "needs some identity" check."""
+    c = _new_contact(store_module, name="", organisation="Acme Corp")
+    stored = store_module.upsert(c)
+    assert stored["name"] == ""
+    assert stored["organisation"] == "Acme Corp"
+
+
+def test_organisation_only_contact_round_trips(store_module, fake_cn):
+    """A company contact adopted from Contacts.app must be writable straight
+    back — a read-modify-write over the whole address book shouldn't break on it."""
+    native = fake_cn.new_contact()
+    native.setOrganizationName_("Acme Corp")
+    fake_cn.save_contact(None, native, is_new=True)
+
+    listed = store_module.list_contacts()[0]
+    assert listed["organisation"] == "Acme Corp"
+    stored = store_module.upsert(listed)
+    assert stored["organisation"] == "Acme Corp"
+
+
+def test_middle_name_included_in_name(store_module, fake_cn):
+    native = fake_cn.new_contact()
+    native.setGivenName_("Mary")
+    native.setMiddleName_("Jane")
+    native.setFamilyName_("Watson")
+    fake_cn.save_contact(None, native, is_new=True)
+
+    assert store_module.list_contacts()[0]["name"] == "Mary Jane Watson"
+
+
+def test_upsert_splits_a_three_part_name_into_given_middle_family(store_module, fake_cn):
+    store_module.upsert(_new_contact(store_module, id="mjw", name="Mary Jane Watson"))
+    stored = fake_cn.contacts[store_module._sidecar.by_id("mjw")]
+    assert stored.givenName() == "Mary"
+    assert stored.middleName() == "Jane"
+    assert stored.familyName() == "Watson"
+
+
+def test_upsert_repeated_spaces_do_not_leak_into_family_name(store_module, fake_cn):
+    store_module.upsert(_new_contact(store_module, id="al", name="Ada  Lovelace"))
+    stored = fake_cn.contacts[store_module._sidecar.by_id("al")]
+    assert stored.givenName() == "Ada"
+    assert stored.familyName() == "Lovelace"
+
+
 def test_upsert_updates_existing(store_module):
     c = _new_contact(store_module, name="Ada Lovelace")
     stored = store_module.upsert(c)

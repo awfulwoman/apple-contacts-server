@@ -84,7 +84,8 @@ def _addresses(values) -> list[dict]:
 
 
 def _contact_to_dict(contact, id: str) -> dict:
-    name = " ".join(p for p in [str(contact.givenName() or ""), str(contact.familyName() or "")] if p).strip()
+    name_parts = [str(contact.givenName() or ""), str(contact.middleName() or ""), str(contact.familyName() or "")]
+    name = " ".join(p for p in name_parts if p)
     return {
         "id": id,
         "name": name,
@@ -99,10 +100,25 @@ def _contact_to_dict(contact, id: str) -> dict:
     }
 
 
+def _split_name(name: str) -> tuple[str, str, str]:
+    """First word is given, last is family, anything between is middle — a
+    heuristic, but the same one most contact-import tools use. `str.split()`
+    with no argument also collapses repeated/leading/trailing whitespace, so
+    "Ada  Lovelace" doesn't leak a leading space into family_name."""
+    parts = name.split()
+    if not parts:
+        return "", "", ""
+    if len(parts) == 1:
+        return parts[0], "", ""
+    if len(parts) == 2:
+        return parts[0], "", parts[1]
+    return parts[0], " ".join(parts[1:-1]), parts[-1]
+
+
 def _apply_dict(mutable, contact: dict) -> None:
-    parts = contact["name"].strip().split(" ", 1)
-    given, family = (parts[0], parts[1]) if len(parts) > 1 else (parts[0], "")
+    given, middle, family = _split_name(contact["name"])
     mutable.setGivenName_(given)
+    mutable.setMiddleName_(middle)
     mutable.setFamilyName_(family)
     mutable.setNickname_(contact.get("nickname") or "")
     mutable.setOrganizationName_(contact.get("organisation") or "")
@@ -161,8 +177,10 @@ def list_contacts() -> list[dict]:
 
 
 def upsert(contact: dict) -> dict:
-    if not (contact.get("name") or "").strip():
-        raise ValueError("name is required and must be non-empty")
+    # A company contact (Contacts.app allows these) has no given/family name at
+    # all — organisation is its only identifying field. Require at least one.
+    if not (contact.get("name") or "").strip() and not (contact.get("organisation") or "").strip():
+        raise ValueError("name or organisation is required")
 
     id = contact["id"]
     cn_identifier = _sidecar.by_id(id)

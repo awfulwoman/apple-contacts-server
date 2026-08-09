@@ -12,6 +12,7 @@ ENTITY_TYPE_CONTACTS = CN.CNEntityTypeContacts
 
 ALL_KEYS = [
     CN.CNContactGivenNameKey,
+    CN.CNContactMiddleNameKey,
     CN.CNContactFamilyNameKey,
     CN.CNContactNicknameKey,
     CN.CNContactOrganizationNameKey,

@@ -113,10 +113,9 @@ prompt, no real Contacts data touched. `apple_contacts_server/contacts_client.py
 is the only module that imports `Contacts` directly, kept thin so it's the one
 thing that needs occasional live verification against real Contacts.app.
 
-`tests/test_known_issues.py` is **expected to fail**. It holds executable
-descriptions of defects found in review but not yet fixed — currently, label
-loss on a native contact's read-modify-write round-trip, and organisation-only
-/ middle-name / repeated-space contacts not round-tripping cleanly. They're
-deliberately not `xfail`-marked so a regression can't hide in them; see that
-module's docstring for the full list, and delete each test as its defect is
-fixed.
+`tests/test_known_issues.py` is **expected to fail**. It holds one remaining
+executable defect from review: a native contact's `work`/`home`/etc. label is
+destroyed by a read-modify-write round-trip, because `emails`/`phones`/`urls`
+are plain string lists with nowhere to carry a label. Fixing it means changing
+that wire format, so it's parked here pending a decision rather than patched
+around. Not `xfail`-marked, deliberately, so a regression can't hide in it.
